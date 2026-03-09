@@ -1,0 +1,24 @@
+{
+  "name": "hyper-index-polymarket",
+  "version": "1.0.0",
+  "description": "Polymarket indexer using Envio Hypersync",
+  "main": "src/index.ts",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "dev": "tsx watch src/index.ts"
+  },
+  "keywords": ["polymarket", "hypersync", "indexer"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@envio-dev/hypersync-client": "^1.1.0",
+    "@clickhouse/client": "^1.7.0",
+    "viem": "^2.21.54",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
