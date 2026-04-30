@@ -2,66 +2,79 @@ import { HypersyncClient, Query } from '@envio-dev/hypersync-client';
 import { keccak256, toHex } from 'viem';
 import { config } from './config';
 import { clickhouse, ensureTable, getLastBlock } from './clickhouse';
-import { decodeLog } from './decoder';
+import { decodeLog, PolymarketAbi, PolymarketV2Abi } from './decoder';
 import { EventCorrelator } from './correlator';
+import { EventCorrelatorV2 } from './correlatorV2';
 import { BatchCollector } from './batchCollector';
 import type { ProcessedBlock, ProcessedTransaction } from './types';
 
-// Event signatures
-const ORDER_FILLED_SIG = "OrderFilled(bytes32,address,address,uint256,uint256,uint256,uint256,uint256)";
-const ORDERS_MATCHED_SIG = "OrdersMatched(bytes32,address,uint256,uint256,uint256,uint256)";
+// V1 event topic0 hashes
+const ORDER_FILLED_SIG_V1 = "OrderFilled(bytes32,address,address,uint256,uint256,uint256,uint256,uint256)";
+const ORDERS_MATCHED_SIG_V1 = "OrdersMatched(bytes32,address,uint256,uint256,uint256,uint256)";
+const orderFilledTopicV1 = keccak256(toHex(ORDER_FILLED_SIG_V1));
+const ordersMatchedTopicV1 = keccak256(toHex(ORDERS_MATCHED_SIG_V1));
 
-// Calculate topic0 hashes
-const orderFilledTopic = keccak256(toHex(ORDER_FILLED_SIG));
-const ordersMatchedTopic = keccak256(toHex(ORDERS_MATCHED_SIG));
+// V2 event topic0 hashes
+const ORDER_FILLED_SIG_V2 = "OrderFilled(bytes32,address,address,uint8,uint256,uint256,uint256,uint256,bytes32,bytes32)";
+const ORDERS_MATCHED_SIG_V2 = "OrdersMatched(bytes32,address,uint8,uint256,uint256,uint256)";
+const orderFilledTopicV2 = keccak256(toHex(ORDER_FILLED_SIG_V2));
+const ordersMatchedTopicV2 = keccak256(toHex(ORDERS_MATCHED_SIG_V2));
 
 async function main() {
-  console.log('🚀 Starting Polymarket Hypersync Indexer\n');
+  const targets = config.indexTargets;
+  console.log(`Starting Polymarket Hypersync Indexer [targets: ${targets.join(',')}]\n`);
 
-  // Ensure ClickHouse table exists
-  console.log('📊 Setting up ClickHouse...');
   await ensureTable();
 
-  // Get last processed block (unless in test mode)
+  // Collect active contracts by version
+  const activeV1Contracts = targets.includes('v1') ? config.contracts.v1 : [];
+  const activeV2Contracts = targets.includes('v2') ? config.contracts.v2 : [];
+  const allActiveContracts = [...activeV1Contracts, ...activeV2Contracts];
+
+  const v2ContractSet = new Set(activeV2Contracts.map(a => a.toLowerCase()));
+
+  // Build the set of topic0 filters
+  const activeTopics: string[] = [];
+  if (targets.includes('v1')) {
+    activeTopics.push(orderFilledTopicV1, ordersMatchedTopicV1);
+  }
+  if (targets.includes('v2')) {
+    activeTopics.push(orderFilledTopicV2, ordersMatchedTopicV2);
+  }
+
+  // Determine start block
   let startBlock: number;
   let endBlock: number | undefined;
 
   if (config.testMode) {
     startBlock = config.testStartBlock;
     endBlock = config.testEndBlock;
-    console.log(`🧪 TEST MODE`);
-    console.log(`📍 Block range: ${startBlock} to ${endBlock} (${endBlock - startBlock} blocks)\n`);
+    console.log(`TEST MODE`);
+    console.log(`Block range: ${startBlock} to ${endBlock} (${endBlock - startBlock} blocks)\n`);
   } else {
-    startBlock = await getLastBlock();
-    console.log(`📍 Starting from block: ${startBlock}`);
-    if (config.streamMode) {
-      console.log(`📍 Mode: STREAMING (continuous)\n`);
-    } else {
-      console.log(`📍 Mode: Historical sync only\n`);
-    }
+    const versionBlocks: number[] = [];
+    if (targets.includes('v1')) versionBlocks.push(await getLastBlock(config.contracts.v1));
+    if (targets.includes('v2')) versionBlocks.push(await getLastBlock(config.contracts.v2));
+    startBlock = Math.max(...versionBlocks);
+    console.log(`Starting from block: ${startBlock}`);
+    console.log(`Mode: ${config.streamMode ? 'STREAMING (continuous)' : 'Historical sync only'}\n`);
   }
 
-  // Initialize Hypersync client
   const client = new HypersyncClient({
     url: config.hypersyncUrl,
     apiToken: config.apiToken
   });
 
-  // Create batch collector and correlator
   const batchCollector = new BatchCollector('polymarket_order_filled_v3', config.batchSize, clickhouse);
-  const correlator = new EventCorrelator(batchCollector);
+  const correlatorV1 = new EventCorrelator(batchCollector);
+  const correlatorV2 = new EventCorrelatorV2(batchCollector);
 
-  // Build query
   const query: Query = {
     fromBlock: startBlock,
     ...(endBlock ? { toBlock: endBlock } : {}),
     logs: [{
-      address: [
-        config.contracts.polymarketMain,
-        config.contracts.polymarketNeg,
-        config.contracts.polymarketNegAdapter
-      ],
-      topics: [[orderFilledTopic, ordersMatchedTopic]]
+      address: allActiveContracts,
+      topics: [activeTopics]
     }],
     fieldSelection: {
       log: [
@@ -79,7 +92,7 @@ async function main() {
     }
   };
 
-  console.log('⚡ Fetching and processing logs...\n');
+  console.log('Fetching and processing logs...\n');
   const startTime = Date.now();
 
   let currentBlock = startBlock;
@@ -87,10 +100,9 @@ async function main() {
   let totalLogs = 0;
   let totalProcessed = 0;
 
-  // Set up periodic flush (every 10 seconds)
   const flushInterval = setInterval(async () => {
     if (batchCollector.getBufferLength() > 0) {
-      console.log(`⏰ Periodic flush: ${batchCollector.getBufferLength()} events in buffer`);
+      console.log(`Periodic flush: ${batchCollector.getBufferLength()} events in buffer`);
       await batchCollector.flush();
     }
   }, 10000);
@@ -105,7 +117,6 @@ async function main() {
 
       const response = await client.get(query);
 
-      // Get current chain height
       const chainHeight = endBlock || response.archiveHeight || response.nextBlock;
       const logs = response.data.logs;
       const blocks = response.data.blocks;
@@ -113,7 +124,6 @@ async function main() {
 
       totalLogs += logs.length;
 
-      // Create lookup maps for blocks and transactions
       const blockMap = new Map<number, ProcessedBlock>();
       for (const block of blocks) {
         blockMap.set(Number(block.number), {
@@ -150,48 +160,46 @@ async function main() {
         logsByTx.get(txHash)!.push(log);
       }
 
-      // Process each transaction's logs in order
       for (const [txHash, txLogs] of logsByTx) {
-        // Sort by log index
         txLogs.sort((a, b) => Number(a.logIndex) - Number(b.logIndex));
 
         for (const log of txLogs) {
-          // Decode the log
-          const decodedLog = decodeLog(log);
+          const isV2 = log.address ? v2ContractSet.has(log.address.toLowerCase()) : false;
+          const abi = isV2 ? PolymarketV2Abi : PolymarketAbi;
+          const decodedLog = decodeLog(log, abi);
           if (!decodedLog) continue;
 
-          // Get block and transaction data
           const block = blockMap.get(Number(log.blockNumber));
           const transaction = txMap.get(txHash);
 
           if (!block || !transaction) {
-            console.error(`❌ Missing block or transaction data for log at ${log.blockNumber}:${log.logIndex}`);
+            console.error(`Missing block or transaction data for log at ${log.blockNumber}:${log.logIndex}`);
             continue;
           }
 
-          // Process through correlator
-          await correlator.processLog(decodedLog, block, transaction);
+          if (isV2) {
+            await correlatorV2.processLog(decodedLog, block, transaction);
+          } else {
+            await correlatorV1.processLog(decodedLog, block, transaction);
+          }
           totalProcessed++;
         }
       }
 
       console.log(`  Page ${pageCount}: Processed ${logs.length} logs (blocks ${currentBlock} to ${response.nextBlock}${endBlock ? '' : ', chain at ' + chainHeight})`);
 
-      // Check if we've caught up to the chain head or end block
       if (response.nextBlock >= chainHeight || response.nextBlock === currentBlock) {
         if (config.testMode || !config.streamMode) {
-          console.log('\n✅ Reached target block, exiting');
+          console.log('\nReached target block, exiting');
           break;
         }
 
-        // In streaming mode, wait a bit before fetching next batch
-        console.log(`\n💤 Caught up to chain head (${chainHeight}), waiting 5 seconds for new blocks...`);
+        console.log(`\nCaught up to chain head (${chainHeight}), waiting 5 seconds for new blocks...`);
         await new Promise(resolve => setTimeout(resolve, 5000));
 
-        // Get latest chain height and continue if new blocks arrived
         const latestHeight = await client.getHeight();
         if (latestHeight > chainHeight) {
-          console.log(`📈 New blocks detected! Chain now at ${latestHeight}\n`);
+          console.log(`New blocks detected! Chain now at ${latestHeight}\n`);
           currentBlock = response.nextBlock;
           continue;
         }
@@ -200,34 +208,30 @@ async function main() {
       }
     }
 
-    // Final flush
-    console.log('\n🔄 Final flush...');
-    await correlator.flush();
+    console.log('\nFinal flush...');
+    await correlatorV1.flush();
+    await correlatorV2.flush();
 
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
 
-    console.log('\n✅ Indexing complete!');
+    console.log('\nIndexing complete!');
     console.log('═══════════════════════════════════════');
-    console.log(`📊 Total pages: ${pageCount}`);
-    console.log(`📝 Total logs fetched: ${totalLogs}`);
-    console.log(`⚙️  Total logs processed: ${totalProcessed}`);
-    console.log(`⏱️  Total time: ${totalTime}s`);
-    console.log(`🏁 Final block: ${currentBlock}`);
+    console.log(`Total pages: ${pageCount}`);
+    console.log(`Total logs fetched: ${totalLogs}`);
+    console.log(`Total logs processed: ${totalProcessed}`);
+    console.log(`Total time: ${totalTime}s`);
+    console.log(`Final block: ${currentBlock}`);
     console.log('═══════════════════════════════════════\n');
 
   } catch (error) {
-    console.error('\n❌ Error during indexing:', error);
+    console.error('\nError during indexing:', error);
     throw error;
   } finally {
-    // Clear interval
     clearInterval(flushInterval);
-
-    // Close ClickHouse connection
     await clickhouse.close();
   }
 }
 
-// Run the indexer
 main().catch((error) => {
   console.error('Fatal error:', error);
   process.exit(1);

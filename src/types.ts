@@ -57,6 +57,8 @@ export interface OrderFilledRow {
   transaction_nonce: number;
   max_fee_per_gas: string;
   max_priority_fee_per_gas: string;
+  builder: string;
+  metadata: string;
 }
 
 export interface OrderFilledBufferItem {
