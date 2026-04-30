@@ -1,11 +1,12 @@
 import { decodeEventLog } from 'viem';
 import { PolymarketAbi } from './abis/PolymarketAbi';
+import { PolymarketV2Abi } from './abis/PolymarketV2Abi';
 import type { DecodedLog } from './types';
 
-export function decodeLog(log: any): DecodedLog | null {
+export function decodeLog(log: any, abi: typeof PolymarketAbi | typeof PolymarketV2Abi = PolymarketAbi): DecodedLog | null {
   try {
     const decoded = decodeEventLog({
-      abi: PolymarketAbi,
+      abi,
       data: log.data as `0x${string}`,
       topics: log.topics as [`0x${string}`, ...`0x${string}`[]],
     });
@@ -26,3 +27,5 @@ export function decodeLog(log: any): DecodedLog | null {
     return null;
   }
 }
+
+export { PolymarketAbi, PolymarketV2Abi };

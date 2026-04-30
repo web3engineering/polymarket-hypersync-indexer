@@ -9,8 +9,7 @@ export const clickhouse = createClient({
 });
 
 export async function ensureTable() {
-  // First ensure the database exists
-  await clickhouse.exec({ query: 'CREATE DATABASE IF NOT EXISTS polymarket' });
+  await clickhouse.command({ query: 'CREATE DATABASE IF NOT EXISTS polymarket' });
 
   const createTableSQL = `
     CREATE TABLE IF NOT EXISTS polymarket.polymarket_order_filled_v3 (
@@ -40,6 +39,8 @@ export async function ensureTable() {
       transaction_nonce UInt64,
       max_fee_per_gas UInt256,
       max_priority_fee_per_gas UInt256,
+      builder String DEFAULT '',
+      metadata String DEFAULT '',
       inserted_at DateTime DEFAULT now(),
       INDEX idx_wallet wallet TYPE bloom_filter GRANULARITY 1,
       INDEX idx_asset asset TYPE bloom_filter GRANULARITY 1,
@@ -51,25 +52,30 @@ export async function ensureTable() {
     SETTINGS index_granularity = 8192
   `;
 
-  await clickhouse.exec({ query: createTableSQL });
+  await clickhouse.command({ query: createTableSQL });
+
+  // Add new columns to existing tables (migration, idempotent)
+  await clickhouse.command({ query: `ALTER TABLE polymarket.polymarket_order_filled_v3 ADD COLUMN IF NOT EXISTS builder String DEFAULT ''` });
+  await clickhouse.command({ query: `ALTER TABLE polymarket.polymarket_order_filled_v3 ADD COLUMN IF NOT EXISTS metadata String DEFAULT ''` });
 }
 
-export async function getLastBlock(): Promise<number> {
+export async function getLastBlock(contractAddresses: string[]): Promise<number> {
+  if (contractAddresses.length === 0) return config.startBlock;
   try {
+    const addressList = contractAddresses.map(a => `'${a.toLowerCase()}'`).join(',');
     const result = await clickhouse.query({
-      query: 'SELECT MAX(block_number) as last_block FROM polymarket.polymarket_order_filled_v3',
+      query: `SELECT MAX(block_number) as last_block FROM polymarket.polymarket_order_filled_v3 WHERE lower(contract_address) IN (${addressList})`,
       format: 'JSONEachRow',
     });
 
-    const rows = await result.json<{ last_block: string }[]>();
+    const rows = (await result.json()) as { last_block: string }[];
 
-    if (rows.length === 0 || rows[0].last_block === '0') {
-      return 65000000; // Default start block
+    if (rows.length === 0 || !rows[0]?.last_block || rows[0].last_block === '0') {
+      return config.startBlock;
     }
 
     return parseInt(rows[0].last_block);
-  } catch (error) {
-    // Table doesn't exist yet or is empty
-    return 65000000;
+  } catch {
+    return config.startBlock;
   }
 }

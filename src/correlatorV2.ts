@@ -1,7 +1,11 @@
 import type { DecodedLog, ProcessedBlock, ProcessedTransaction, OrderFilledRow, OrderFilledBufferItem } from './types';
 import { BatchCollector } from './batchCollector';
 
-export class EventCorrelator {
+// Side enum: 0 = BUY, 1 = SELL
+// BUY:  maker pays USDC (makerAmountFilled), receives tokens (takerAmountFilled)
+// SELL: maker pays tokens (makerAmountFilled), receives USDC (takerAmountFilled)
+
+export class EventCorrelatorV2 {
   private orderFilledBuffers: Map<string, OrderFilledBufferItem[]> = new Map();
   private lastProcessedLogIndex: Map<string, number> = new Map();
   private batchCollector: BatchCollector;
@@ -33,8 +37,7 @@ export class EventCorrelator {
       this.orderFilledBuffers.set(txHash, []);
     }
 
-    const buffer = this.orderFilledBuffers.get(txHash)!;
-    buffer.push({
+    this.orderFilledBuffers.get(txHash)!.push({
       log,
       block,
       transaction,
@@ -49,10 +52,9 @@ export class EventCorrelator {
   ): Promise<void> {
     const txHash = transaction.hash;
     const currentLogIndex = log.logIndex;
-    const takerOrderHash = log.args.takerOrderHash;
-    const takerOrderMaker = log.args.takerOrderMaker;
-    const makerAssetId = log.args.makerAssetId;
-    const takerAssetId = log.args.takerAssetId;
+    const takerOrderHash = log.args.takerOrderHash as string;
+    const takerOrderMaker = log.args.takerOrderMaker as string;
+    const side = Number(log.args.side); // 0=BUY, 1=SELL
 
     const allBuffered = this.orderFilledBuffers.get(txHash) || [];
 
@@ -61,10 +63,8 @@ export class EventCorrelator {
       return;
     }
 
-    // Get the log index boundary
     const lastLogIndex = this.lastProcessedLogIndex.get(txHash) ?? -1;
 
-    // Filter to OrderFilled events between last OrdersMatched and this one
     const relevantEvents = allBuffered.filter(item =>
       item.logIndex > lastLogIndex && item.logIndex < currentLogIndex
     );
@@ -76,72 +76,42 @@ export class EventCorrelator {
       return;
     }
 
-    // Sort by logIndex
     relevantEvents.sort((a, b) => a.logIndex - b.logIndex);
 
-    // Drop the last OrderFilled (summary event)
-    const droppedEvent = relevantEvents.pop();
+    // Drop the last OrderFilled (summary event for taker), but capture its builder/metadata
+    const summaryEvent = relevantEvents.pop();
+    const takerBuilder = (summaryEvent?.log.args.builder as string) || '';
+    const takerMetadata = (summaryEvent?.log.args.metadata as string) || '';
 
-    // Update last processed log index
     this.lastProcessedLogIndex.set(txHash, currentLogIndex);
 
-    // Determine asset and side
-    let asset: string;
-    let takerSide: string;
-
-    if (makerAssetId === 0n) {
-      // Taker is buying (spending USDC to get tokens)
-      asset = takerAssetId.toString();
-      takerSide = 'B';
-    } else if (takerAssetId === 0n) {
-      // Taker is selling (selling tokens for USDC)
-      asset = makerAssetId.toString();
-      takerSide = 'S';
-    } else {
-      console.error(`❌ Invalid OrdersMatched: both assets non-zero for ${takerOrderHash}`);
-      return;
-    }
-
-    // Process all remaining OrderFilled events as makers
+    // Process remaining OrderFilled events as maker rows
     for (const bufferedItem of relevantEvents) {
       const filledLog = bufferedItem.log;
       const filledBlock = bufferedItem.block;
       const filledTx = bufferedItem.transaction;
 
-      const maker = filledLog.args.maker;
-      const filledMakerAssetId = filledLog.args.makerAssetId;
-      const filledTakerAssetId = filledLog.args.takerAssetId;
+      const makerSide = Number(filledLog.args.side); // 0=BUY, 1=SELL
+      const sideChar = makerSide === 0 ? 'B' : 'S';
+      const tokenId = (filledLog.args.tokenId as bigint).toString();
 
-      // Determine maker's side
-      let makerSide: string;
-      if (filledMakerAssetId === 0n) {
-        makerSide = 'B'; // Maker buying tokens with USDC
-      } else {
-        makerSide = 'S'; // Maker selling tokens for USDC
-      }
-
-      // Determine amounts
-      const amountToken = filledMakerAssetId === 0n
-        ? filledLog.args.takerAmountFilled.toString()
-        : filledLog.args.makerAmountFilled.toString();
-      const amountUsdc = filledMakerAssetId === 0n
-        ? filledLog.args.makerAmountFilled.toString()
-        : filledLog.args.takerAmountFilled.toString();
-
-      const hereAsset = filledMakerAssetId === 0n
-        ? filledTakerAssetId
-        : filledMakerAssetId;
+      const amountToken = makerSide === 0
+        ? (filledLog.args.takerAmountFilled as bigint).toString()
+        : (filledLog.args.makerAmountFilled as bigint).toString();
+      const amountUsdc = makerSide === 0
+        ? (filledLog.args.makerAmountFilled as bigint).toString()
+        : (filledLog.args.takerAmountFilled as bigint).toString();
 
       const makerRow: OrderFilledRow = {
         event_id: `${filledLog.transactionHash}-${filledLog.logIndex}`,
-        order_hash: filledLog.args.orderHash,
-        wallet: maker,
+        order_hash: filledLog.args.orderHash as string,
+        wallet: filledLog.args.maker as string,
         is_maker: true,
-        side: makerSide,
-        asset: hereAsset.toString(),
+        side: sideChar,
+        asset: tokenId,
         amount_token: amountToken,
         amount_usdc: amountUsdc,
-        fee: filledLog.args.fee.toString(),
+        fee: (filledLog.args.fee as bigint).toString(),
         block_number: filledBlock.number,
         log_index: filledLog.logIndex,
         transaction_index: filledLog.transactionIndex,
@@ -159,28 +129,31 @@ export class EventCorrelator {
         transaction_nonce: Number(filledTx.nonce),
         max_fee_per_gas: filledTx.maxFeePerGas?.toString() || '0',
         max_priority_fee_per_gas: filledTx.maxPriorityFeePerGas?.toString() || '0',
-        builder: '',
-        metadata: '',
+        builder: (filledLog.args.builder as string) || '',
+        metadata: (filledLog.args.metadata as string) || '',
       };
 
       await this.batchCollector.add(makerRow);
     }
 
-    // Add taker row from OrdersMatched event
-    const takerAmountToken = makerAssetId === 0n
-      ? log.args.takerAmountFilled.toString()
-      : log.args.makerAmountFilled.toString();
-    const takerAmountUsdc = makerAssetId === 0n
-      ? log.args.makerAmountFilled.toString()
-      : log.args.takerAmountFilled.toString();
+    // Add taker row from OrdersMatched
+    const tokenId = (log.args.tokenId as bigint).toString();
+    const takerSideChar = side === 0 ? 'B' : 'S';
+
+    const takerAmountToken = side === 0
+      ? (log.args.takerAmountFilled as bigint).toString()
+      : (log.args.makerAmountFilled as bigint).toString();
+    const takerAmountUsdc = side === 0
+      ? (log.args.makerAmountFilled as bigint).toString()
+      : (log.args.takerAmountFilled as bigint).toString();
 
     const takerRow: OrderFilledRow = {
       event_id: `${log.transactionHash}-${log.logIndex}`,
       order_hash: takerOrderHash,
       wallet: takerOrderMaker,
       is_maker: false,
-      side: takerSide,
-      asset: asset,
+      side: takerSideChar,
+      asset: tokenId,
       amount_token: takerAmountToken,
       amount_usdc: takerAmountUsdc,
       fee: '0',
@@ -201,15 +174,14 @@ export class EventCorrelator {
       transaction_nonce: Number(transaction.nonce),
       max_fee_per_gas: transaction.maxFeePerGas?.toString() || '0',
       max_priority_fee_per_gas: transaction.maxPriorityFeePerGas?.toString() || '0',
-      builder: '',
-      metadata: '',
+      builder: takerBuilder,
+      metadata: takerMetadata,
     };
 
     await this.batchCollector.add(takerRow);
 
-    console.log(`✅ Processed OrdersMatched: ${relevantEvents.length} makers + 1 taker for ${takerOrderHash}`);
+    console.log(`✅ [V2] Processed OrdersMatched: ${relevantEvents.length} makers + 1 taker for ${takerOrderHash}`);
 
-    // Clean up buffers
     this.orderFilledBuffers.delete(txHash);
     this.lastProcessedLogIndex.delete(txHash);
   }
