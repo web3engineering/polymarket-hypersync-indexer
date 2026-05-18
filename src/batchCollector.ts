@@ -1,8 +1,7 @@
 import type { ClickHouseClient } from '@clickhouse/client';
-import type { OrderFilledRow } from './types';
 
-export class BatchCollector {
-  private buffer: OrderFilledRow[] = [];
+export class BatchCollector<T extends object = object> {
+  private buffer: T[] = [];
   private tableName: string;
   private batchSize: number;
   private clickhouse: ClickHouseClient;
@@ -13,7 +12,7 @@ export class BatchCollector {
     this.clickhouse = clickhouseClient;
   }
 
-  async add(row: OrderFilledRow) {
+  async add(row: T) {
     this.buffer.push(row);
 
     if (this.buffer.length >= this.batchSize) {
