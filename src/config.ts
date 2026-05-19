@@ -39,6 +39,7 @@ export const config = {
   hypersyncUrl: process.env.HYPERSYNC_URL || 'https://polygon.hypersync.xyz',
   apiToken: process.env.ENVIO_API_TOKEN || '',
   startBlock: parseInt(process.env.START_BLOCK || '65000000'),
+  endBlock: process.env.END_BLOCK ? parseInt(process.env.END_BLOCK) : undefined,
   streamMode: process.env.STREAM_MODE !== 'false',
   testMode: process.env.TEST_MODE === 'true',
   testStartBlock: parseInt(process.env.TEST_START_BLOCK || '83988143'),

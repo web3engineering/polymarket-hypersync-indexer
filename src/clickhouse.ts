@@ -314,7 +314,9 @@ export async function getLastBlock(contractAddresses: string[]): Promise<number>
       return config.startBlock;
     }
 
-    return parseInt(rows[0].last_block);
+    // +1 so the next run starts from the block after the last indexed one,
+    // avoiding re-indexing (and duplicating) the boundary block.
+    return parseInt(rows[0].last_block) + 1;
   } catch {
     return config.startBlock;
   }

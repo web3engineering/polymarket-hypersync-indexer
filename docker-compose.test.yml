@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.1.1.2048-alpine
+    container_name: polymarket-clickhouse-test
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    environment:
+      CLICKHOUSE_DB: polymarket
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhouse-test-data:/var/lib/clickhouse
+
+  indexer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      CLICKHOUSE_HOST: http://clickhouse:8123
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+      HYPERSYNC_URL: ${HYPERSYNC_URL:-https://polygon.hypersync.xyz}
+      ENVIO_API_TOKEN: ${ENVIO_API_TOKEN}
+      STREAM_MODE: "false"
+      INDEX_TARGETS: ${INDEX_TARGETS:-v1}
+      INDEX_FLOW: ${INDEX_FLOW:-fills}
+      START_BLOCK: ${START_BLOCK:-85500000}
+      END_BLOCK: ${END_BLOCK:-85501000}
+      CONDITIONAL_TOKENS_START_BLOCK: ${START_BLOCK:-85500000}
+      BATCH_SIZE: ${BATCH_SIZE:-500}
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    profiles:
+      - run
+
+volumes:
+  clickhouse-test-data:

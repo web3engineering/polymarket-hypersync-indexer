@@ -56,7 +56,8 @@ export async function runFillsFlow() {
     if (targets.includes('v1')) versionBlocks.push(await getLastBlock(config.contracts.v1));
     if (targets.includes('v2')) versionBlocks.push(await getLastBlock(config.contracts.v2));
     startBlock = Math.max(...versionBlocks);
-    console.log(`Starting from block: ${startBlock}`);
+    if (config.endBlock) endBlock = config.endBlock;
+    console.log(`Starting from block: ${startBlock}${endBlock ? ` to ${endBlock}` : ''}`);
     console.log(`Mode: ${config.streamMode ? 'STREAMING (continuous)' : 'Historical sync only'}\n`);
   }
 

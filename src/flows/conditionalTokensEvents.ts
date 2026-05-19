@@ -369,14 +369,22 @@ export async function runConditionalTokensEventsFlow() {
           const specProgress = byEvent.get(spec.eventName);
           const fromBlock = specProgress?.nextBlock ?? config.conditionalTokens.startBlock;
           console.log(`  ${spec.tableName}: ${fromBlock} -> ${mostAdvancedNextBlock}`);
-          await fetchAndInsertRange(client, [spec], collectors, fromBlock, mostAdvancedNextBlock);
+          const reached = await fetchAndInsertRange(client, [spec], collectors, fromBlock, mostAdvancedNextBlock);
+          // Update in-memory progress so tables with 0 events in the range don't
+          // loop forever (their DB max_block stays behind but we've fetched the range).
+          if (specProgress) specProgress.nextBlock = reached;
         }
 
-        continue;
+        // Only loop back if something genuinely couldn't advance (shouldn't happen).
+        const stillLagging = CONDITIONAL_EVENT_SPECS.some(spec => {
+          const item = byEvent.get(spec.eventName);
+          return (item?.nextBlock ?? 0) < mostAdvancedNextBlock;
+        });
+        if (stillLagging) continue;
       }
 
       const commonNextBlock = mostAdvancedNextBlock;
-      const latestExclusiveBlock = (await client.getHeight()) + 1;
+      const latestExclusiveBlock = config.endBlock ?? ((await client.getHeight()) + 1);
 
       if (commonNextBlock < latestExclusiveBlock) {
         console.log(`All conditional-token tables aligned at ${commonNextBlock}; syncing to ${latestExclusiveBlock}`);
