@@ -1,9 +1,12 @@
 import { decodeEventLog } from 'viem';
 import { PolymarketAbi } from './abis/PolymarketAbi';
 import { PolymarketV2Abi } from './abis/PolymarketV2Abi';
+import { ConditionalTokensAbi } from './abis/ConditionalTokensAbi';
 import type { DecodedLog } from './types';
 
-export function decodeLog(log: any, abi: typeof PolymarketAbi | typeof PolymarketV2Abi = PolymarketAbi): DecodedLog | null {
+type SupportedAbi = typeof PolymarketAbi | typeof PolymarketV2Abi | typeof ConditionalTokensAbi;
+
+export function decodeLog(log: any, abi: SupportedAbi = PolymarketAbi): DecodedLog | null {
   try {
     const decoded = decodeEventLog({
       abi,
@@ -28,4 +31,4 @@ export function decodeLog(log: any, abi: typeof PolymarketAbi | typeof Polymarke
   }
 }
 
-export { PolymarketAbi, PolymarketV2Abi };
+export { PolymarketAbi, PolymarketV2Abi, ConditionalTokensAbi };

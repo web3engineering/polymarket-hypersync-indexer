@@ -1,5 +1,26 @@
 import 'dotenv/config';
 
+export type IndexFlow = 'fills' | 'conditional-tokens-events';
+
+function parseFlow(): IndexFlow {
+  const args = process.argv;
+  let raw = process.env.INDEX_FLOW || process.env.FLOW || 'fills';
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--flow' && i + 1 < args.length) {
+      raw = args[i + 1];
+    } else if (args[i].startsWith('--flow=')) {
+      raw = args[i].slice('--flow='.length);
+    }
+  }
+
+  if (raw === 'fills' || raw === 'conditional-tokens-events') {
+    return raw;
+  }
+
+  throw new Error(`Unsupported INDEX_FLOW/FLOW value "${raw}". Use "fills" or "conditional-tokens-events".`);
+}
+
 function parseIndexTargets(): ('v1' | 'v2')[] {
   const args = process.argv;
   for (let i = 0; i < args.length; i++) {
@@ -14,9 +35,11 @@ function parseIndexTargets(): ('v1' | 'v2')[] {
 }
 
 export const config = {
+  flow: parseFlow(),
   hypersyncUrl: process.env.HYPERSYNC_URL || 'https://polygon.hypersync.xyz',
   apiToken: process.env.ENVIO_API_TOKEN || '',
   startBlock: parseInt(process.env.START_BLOCK || '65000000'),
+  endBlock: process.env.END_BLOCK ? parseInt(process.env.END_BLOCK) : undefined,
   streamMode: process.env.STREAM_MODE !== 'false',
   testMode: process.env.TEST_MODE === 'true',
   testStartBlock: parseInt(process.env.TEST_START_BLOCK || '83988143'),
@@ -33,6 +56,13 @@ export const config = {
       '0xE111180000d2663C0091e4f400237545B87B996B',
       '0xe2222d279d744050d28e00520010520000310F59',
     ],
+    conditionalTokens: '0x4d97dcd97ec945f40cf65f87097ace5ea0476045',
+  },
+
+  conditionalTokens: {
+    startBlock: parseInt(process.env.CONDITIONAL_TOKENS_START_BLOCK || '0'),
+    pollMs: parseInt(process.env.CONDITIONAL_TOKENS_POLL_MS || '5000'),
+    eventIdChainId: BigInt(process.env.CONDITIONAL_TOKENS_EVENT_ID_CHAIN_ID || '1'),
   },
 
   clickhouse: {

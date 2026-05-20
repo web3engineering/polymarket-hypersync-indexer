@@ -91,6 +91,34 @@ npm start
 npx tsx src/index.ts
 ```
 
+The indexer now has selectable flows:
+
+```bash
+# Filled/Matched event flow
+npm run start:fills
+
+# Conditional Tokens events flow
+npm run start:conditional
+```
+
+Equivalent CLI/env selection:
+
+```bash
+npx tsx src/index.ts --flow fills
+npx tsx src/index.ts --flow conditional-tokens-events
+INDEX_FLOW=conditional-tokens-events npm start
+```
+
+The `conditional-tokens-events` flow writes the existing `polymarket.conditional_tokens_*` tables for `ConditionPreparation`, `ConditionResolution`, `PositionSplit`, `PositionsMerge`, `PayoutRedemption`, and `URI`. It derives progress from `max(block_number)` on each event table, catches up lagging tables individually, then syncs all conditional-token events together from the aligned block.
+
+Conditional-token options:
+
+```env
+CONDITIONAL_TOKENS_START_BLOCK=0
+CONDITIONAL_TOKENS_POLL_MS=5000
+CONDITIONAL_TOKENS_EVENT_ID_CHAIN_ID=1
+```
+
 Expected output:
 ```
 Initializing Hypersync client...
