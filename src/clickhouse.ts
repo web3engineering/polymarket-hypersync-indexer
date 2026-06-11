@@ -271,6 +271,54 @@ export async function ensureConditionalTokensTables() {
   ` });
 }
 
+export async function ensureConvertTable() {
+  await clickhouse.command({ query: 'CREATE DATABASE IF NOT EXISTS polymarket' });
+
+  await clickhouse.command({ query: `
+    CREATE TABLE IF NOT EXISTS polymarket.positions_converted (
+      stakeholder String,
+      market_id String,
+      index_set String,
+      amount String,
+      event_id String,
+      block_number UInt64,
+      log_index UInt32,
+      transaction_index UInt32,
+      contract_address String,
+      block_hash String,
+      block_timestamp DateTime,
+      gas_used UInt64,
+      gas_limit UInt64,
+      base_fee_per_gas UInt256,
+      transaction_hash String,
+      transaction_from String,
+      transaction_to String,
+      transaction_value UInt256,
+      transaction_gas UInt64,
+      transaction_nonce UInt64,
+      max_fee_per_gas UInt256,
+      max_priority_fee_per_gas UInt256,
+      inserted_at DateTime DEFAULT now(),
+      INDEX idx_stakeholder_convert stakeholder TYPE bloom_filter GRANULARITY 1,
+      INDEX idx_market_id_convert market_id TYPE bloom_filter GRANULARITY 1
+    ) ENGINE = MergeTree
+    PARTITION BY toYYYYMMDD(block_timestamp)
+    ORDER BY (block_number, transaction_index, log_index)
+    SETTINGS index_granularity = 8192
+  ` });
+}
+
+export async function getLastConvertBlock(): Promise<number> {
+  const result = await clickhouse.query({
+    query: `SELECT ifNull(max(block_number), 0) as last_block FROM polymarket.positions_converted`,
+    format: 'JSONEachRow',
+  });
+  const rows = (await result.json()) as { last_block: string | number }[];
+  const raw = rows[0]?.last_block ?? 0;
+  const block = typeof raw === 'number' ? raw : parseInt(raw, 10);
+  return block > 0 ? block + 1 : config.convert.startBlock;
+}
+
 export async function getTableMaxBlock(tableName: string): Promise<number> {
   const result = await clickhouse.query({
     query: `SELECT ifNull(max(block_number), 0) as last_block FROM polymarket.${tableName}`,

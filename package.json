@@ -7,6 +7,7 @@
     "start": "tsx src/index.ts",
     "start:fills": "tsx src/index.ts --flow fills",
     "start:conditional": "tsx src/index.ts --flow conditional-tokens-events",
+    "start:convert": "tsx src/index.ts --flow convert",
     "dev": "tsx watch src/index.ts"
   },
   "keywords": ["polymarket", "hypersync", "indexer"],

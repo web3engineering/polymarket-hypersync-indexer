@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-export type IndexFlow = 'fills' | 'conditional-tokens-events';
+export type IndexFlow = 'fills' | 'conditional-tokens-events' | 'convert';
 
 function parseFlow(): IndexFlow {
   const args = process.argv;
@@ -14,11 +14,11 @@ function parseFlow(): IndexFlow {
     }
   }
 
-  if (raw === 'fills' || raw === 'conditional-tokens-events') {
+  if (raw === 'fills' || raw === 'conditional-tokens-events' || raw === 'convert') {
     return raw;
   }
 
-  throw new Error(`Unsupported INDEX_FLOW/FLOW value "${raw}". Use "fills" or "conditional-tokens-events".`);
+  throw new Error(`Unsupported INDEX_FLOW/FLOW value "${raw}". Use "fills", "conditional-tokens-events", or "convert".`);
 }
 
 function parseIndexTargets(): ('v1' | 'v2')[] {
@@ -57,12 +57,18 @@ export const config = {
       '0xe2222d279d744050d28e00520010520000310F59',
     ],
     conditionalTokens: '0x4d97dcd97ec945f40cf65f87097ace5ea0476045',
+    negRiskAdapter: '0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296',
   },
 
   conditionalTokens: {
     startBlock: parseInt(process.env.CONDITIONAL_TOKENS_START_BLOCK || '0'),
     pollMs: parseInt(process.env.CONDITIONAL_TOKENS_POLL_MS || '5000'),
     eventIdChainId: BigInt(process.env.CONDITIONAL_TOKENS_EVENT_ID_CHAIN_ID || '1'),
+  },
+
+  convert: {
+    startBlock: parseInt(process.env.CONVERT_START_BLOCK || '0'),
+    pollMs: parseInt(process.env.CONVERT_POLL_MS || '5000'),
   },
 
   clickhouse: {
